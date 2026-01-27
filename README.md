@@ -4,7 +4,7 @@ This framework evaluates the generalization capability of **Pathology Foundation
 
 ---
 
-## ## Key Features
+## Key Features
 
 * **Feature Extraction**: Extracts embedding features of each WSI using PFMs via [TRIDENT](https://github.com/mahmoodlab/TRIDENT).
 * **Feature Preparation**: Prepares features for analysis. If stain normalization or other mitigation data is used, the framework ensures only relevant patches from the whole dataset are processed.
