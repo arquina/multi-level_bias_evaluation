@@ -1,4 +1,18 @@
 # Multi-Level Evaluation Reveals Heterogeneous Bias in Pathology Foundation Models
 
+This framework evaluates the generalization capability of Pathology Foundation Models (PFMs) by quantifying multi-level biases within Whole Slide Image (WSI) datasets. It provides a systematic approach to measure bias across three hierarchical levels: Cohort, Slide, and Patch.
 
-Pathology Foundation Models (PFMs) are rapidly transforming digital pathology; however, how different models capture or exhibit technical biases has not been systematically characterized. In particular, it remains unclear which specific slides, staining patterns, or tissue regions drive these biases, and whether they arise uniformly across a model. In this study, a multi-level evaluation pipeline was developed to systematically characterize the center bias in PFMs by integrating cohort-, slide-, and patch-level analyses. Within this pipeline, the Slide-wise Distribution Difference (SDD) and Patch-wise Distance Difference (PDD) are introduced to quantify the slide- and patch-level biases by comparing the patch-to-prototype distance distributions across centers. Applying this framework to The Cancer Genome Atlas (TCGA) and a controlled multi-center in-house dataset, it was observed that PFMs still exhibited center bias with variability across models. Slide-level analysis revealed heterogeneity in center bias across samples, and patch-level analysis further identified tissue regions associated with elevated center bias. Together, these results demonstrate that the center bias in PFMs is heterogeneous and spatially localized, and that our pipeline enables the systematic evaluation of bias across multiple representation levels.
+Key Features
+Feature Extraction: Extracts patch-level embeddings using state-of-the-art PFMs. This framework is optimized for features generated via TRIDENT.
+
+Data Preparation: Facilitates feature organization for downstream analysis. It supports custom filtering, such as including only specific patches after stain normalization or other bias-mitigation preprocessing.
+
+Cohort-level Evaluation: Quantifies global dataset bias using Uniform Manifold Approximation and Projection (UMAP) for visualization and Normalized Mutual Information (NMI) to measure the alignment between feature clusters and metadata (e.g., subtype, center, race, scanner).
+
+Prototype Construction: Builds representative Bias Prototypes (e.g., for specific Centers, Races, or Scanners) using a prototype-based method. It calculates the embedding distance between individual patches and these prototypes for every slide.
+
+Slide-level Evaluation: Employs the Wasserstein Distance to evaluate the distributional shift of bias at the slide level, offering a robust metric for inter-slide variability.
+
+Patch-level Evaluation: Pinpoints localized bias by analyzing the distance of each patch to the defined prototypes, revealing how specific tissue regions are affected by non-biological factors.
+
+Visualization: Supports Bias Heatmap Overlay, allowing users to visualize the intensity and spatial distribution of patch-level bias directly onto the original WSI.
