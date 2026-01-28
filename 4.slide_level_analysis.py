@@ -111,8 +111,8 @@ def slide_level_analysis(root_dir, meta_data, pfm_list, save_dir, target_column,
     sns.barplot(data=total_df, x='PFM', y='SDD_%s' % target_column, hue='label', order=pfm_list)
     plt.ylim(0, 0.4)
 
-    plt.savefig(os.path.join(plot_dir, '%s_psi_%s_barplot_per_type.png' % (data_type, target_column)))
-    plt.savefig(os.path.join(plot_dir, '%s_psi_%s_barplot_per_type.svg' % (data_type, target_column)), dpi=1000)
+    plt.savefig(os.path.join(plot_dir, '%s_sdd_%s_barplot_per_type.png' % (data_type, target_column)))
+    plt.savefig(os.path.join(plot_dir, '%s_sdd_%s_barplot_per_type.svg' % (data_type, target_column)), dpi=1000)
     
     
     feature_results = []
