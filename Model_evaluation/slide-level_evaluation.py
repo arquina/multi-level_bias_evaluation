@@ -26,7 +26,6 @@ subtype_order = ['KIRC', 'KIRP', 'KICH']
 feature_origin_list = ['virchow', 'virchow2', 'UNI', 'UNI2', 'GigaPath', 'CONCH'] 
 analysis_target_list = ['subtype', 'center']
 
-        
 ## extract wd
 if True:     
     def compute_psi_from_long(
