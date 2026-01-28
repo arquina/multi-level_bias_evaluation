@@ -383,7 +383,7 @@ def build_prototype_and_distance_calculation(feature_root_dir, metadata, target_
     target_type_sample = target_type_sample[target_type_sample['center'].isin(target_center)]
     meta_df = target_type_sample.drop_duplicates()
 
-    save_dir = os.path.join(save_dir, 'prototype_distance_dataset')
+    save_dir = os.path.join(save_dir, '3.prototype_distance_dataset')
     os.makedirs(save_dir, exist_ok=True)
     # ---- usage ----
     if os.path.exists(os.path.join(save_dir, 'prototype_df.csv')):

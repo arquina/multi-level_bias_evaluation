@@ -154,10 +154,10 @@ def slide_level_analysis(root_dir, meta_data, pfm_list, save_dir, target_column,
     
 def Parser_main():
     parser = argparse.ArgumentParser(description="Extract feature for prototyping")
-    parser.add_argument("--root_dir", default = "/mnt/disk1/Kidney/Github_test/prototype_distance_dataset/", help = 'root_dir of analysis', type = str, required = False)
-    parser.add_argument("--metadata", default = "/mnt/disk1/Kidney/Github_test/metadata.csv", help = 'Path of the metadata', type = str, required = False)
-    parser.add_argument("--save_dir", default = "/mnt/disk1/Kidney/Github_test/slide_level_analysis/", help = 'Directory to save the feature',type = str, required = False)
-    parser.add_argument("--pfm_list", nargs = "+", default = ['virchow', 'virchow2', 'UNI', 'UNI2'], help = 'PFM list for comparison', type = str)
+    parser.add_argument("--root_dir", help = 'root_dir of analysis', type = str, required = True)
+    parser.add_argument("--metadata", help = 'Path of the metadata', type = str, required = True)
+    parser.add_argument("--save_dir", help = 'Directory to save the feature',type = str, required = True)
+    parser.add_argument("--pfm_list", nargs = "+", default = [], help = 'PFM list for comparison', type = str)
     parser.add_argument("--target_column", default = 'center', help = 'Cateogry to make prototype (e.g. subtype, center, scanner, race)')
     parser.add_argument("--stainnorm", default = False, help = 'Stainnorm data or not', type = bool)
     parser.add_argument("--cancer_only", default = False, help = 'Use cancer only data', type = bool)

@@ -149,13 +149,12 @@ def mitigation_comparison(root_dir, pfm_list,save_dir, target_column, target_mit
 
 def Parser_main():
     parser = argparse.ArgumentParser(description="Extract feature for prototyping")
-    parser.add_argument("--root_dir", default = "/mnt/disk1/Kidney/Github_test/prototype_distance_dataset/", help = 'root_dir of analysis', type = str, required = False)
-    parser.add_argument("--metadata", default = "/mnt/disk1/Kidney/Github_test/metadata.csv", help = 'Path of the metadata', type = str, required = False)
-    parser.add_argument("--save_dir", default = "/mnt/disk1/Kidney/Github_test/mitigation_comparison/", help = 'Directory to save the feature',type = str, required = False)
-    parser.add_argument("--pfm_list", nargs = "+", default = ['virchow', 'virchow2', 'UNI', 'UNI2'], help = 'PFM list for comparison', type = str)
+    parser.add_argument("--root_dir", help = 'root_dir of analysis', type = str, required = False)
+    parser.add_argument("--metadata", help = 'Path of the metadata', type = str, required = False)
+    parser.add_argument("--save_dir", help = 'Directory to save the feature',type = str, required = False)
+    parser.add_argument("--pfm_list", nargs = "+", default = [], help = 'PFM list for comparison', type = str)
     parser.add_argument("--target_column", default = 'center', help = 'Cateogry to make prototype (e.g. subtype, center, scanner, race)')
     parser.add_argument("--target_mitigation", default = 'stainnorm', help = 'Mitigation for compare', type = bool)
-    
     return parser.parse_args()
 
 def main():
