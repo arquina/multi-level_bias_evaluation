@@ -1,4 +1,5 @@
 import os
+import re
 import numpy as np
 import pandas as pd
 import openslide
@@ -44,7 +45,7 @@ def compute_margin_min(df, center_cols, true_center_col="center", center_prefix=
 def collect_all_samples(root_dir, model_list, target):
     samples = set()
     for model in model_list:
-        df = pd.read_csv(f"{root_dir}/{model}_dist_to_%s_prototypes_wide.csv" % target)
+        df = pd.read_csv(os.path.join(root_dir, 'distance', '%s_dist_to_%s_prototypes_wide.csv' % (model, target)))
         samples.update(df["Sample"].unique().tolist())
     return sorted(list(samples))
 
@@ -109,9 +110,9 @@ def overlay_patches_heatmap(
         x1 = x0 + w
         y1 = y0 + h
 
-        # value → RGBA → BGR (cv2)
+        # value ??RGBA ??BGR (cv2)
         rgba = colormap(norm(v))
-        color = tuple(int(255 * c) for c in rgba[:3][:3])  # RGB → BGR
+        color = tuple(int(255 * c) for c in rgba[:3][:3])  # RGB ??BGR
 
         cv2.rectangle(
             overlay,
@@ -145,7 +146,7 @@ def overlay_patches(
     patch_size,
     color=(255, 0, 0),
     alpha=0.2,
-    patch_scale_factor=2.0,  # 🔑 핵심
+    patch_scale_factor=2.0,  # ?뵎 ?듭떖
 ):
     overlay = img.copy()
 
@@ -169,7 +170,7 @@ def overlay_patches_square(
     patch_size,
     color=(0, 0, 255),
     alpha=0.25,
-    patch_scale_factor=2.0,  # 핵심 보정
+    patch_scale_factor=2.0,  # ?듭떖 蹂댁젙
 ):
     """
     Draw square patch overlays (top-left based) on thumbnail.
@@ -207,7 +208,7 @@ def overlay_patches_double_square(
     color1=(255, 0, 0),
     color2=(0, 0, 255),
     alpha=0.25,
-    patch_scale_factor=2.0,  # 핵심 보정
+    patch_scale_factor=2.0,  # ?듭떖 蹂댁젙
 ):
     """
     Draw square patch overlays (top-left based) on thumbnail.
@@ -276,24 +277,87 @@ def find_file_by_sample(root_dir, sample_id, suffix):
                 f"Multiple files found for sample '{sample_id}' in {root_dir}: {candidates}"
             )
 
+def find_file_containing_sample(dirpath, filenames, sample_id, suffix):
+    """
+    Fallback for filenames that don't start with the sample id, e.g. SNUBH
+    prefixes every file with the center name ('SNUBH_S12-1449-6.svs' for
+    sample 'S12-1449'). Matches sample_id as a substring bounded by
+    non-alphanumeric characters (or string edges) so 'S12-1449' doesn't
+    also match a longer id like 'S12-14495'.
+    """
+    pattern = re.compile(r'(?:^|[^0-9A-Za-z])' + re.escape(sample_id) + r'(?:[^0-9A-Za-z]|$)')
+    candidates = [f for f in filenames if f.endswith(suffix) and pattern.search(f)]
+    if len(candidates) == 1:
+        return os.path.join(dirpath, candidates[0])
+    return None
+
+def find_svs_path(svs_root_dir, center, subtype, sample):
+    """
+    Resolve a sample's .svs path. Internal cohort is nested center/subtype/
+    (e.g. BORAMAE/KIRC/), but some centers (KHMC, SNUBH, GSH, GSH_histech)
+    file everything under a single umbrella folder (e.g. KHMC/RCC/) instead
+    of per-subtype-code folders, so the metadata subtype ('KIRP') doesn't
+    match the actual directory name ('RCC'). Fall back to a recursive search
+    under center/ before giving up (TCGA has no center subfolder at all, so
+    that path is tried last, flat under svs_root_dir/subtype/). SNUBH also
+    prefixes filenames with the center name, so within the walk we also try
+    a substring match, not just startswith.
+    """
+    svs_subdir = os.path.join(svs_root_dir, center, subtype)
+    if os.path.isdir(svs_subdir):
+        path = find_file_by_sample(svs_subdir, sample, suffix=".svs")
+        if path:
+            return path
+
+    center_dir = os.path.join(svs_root_dir, center)
+    if os.path.isdir(center_dir):
+        for dirpath, _, filenames in os.walk(center_dir):
+            path = find_file_by_sample(dirpath, sample, suffix=".svs")
+            if path:
+                return path
+            path = find_file_containing_sample(dirpath, filenames, sample, suffix=".svs")
+            if path:
+                return path
+
+    flat_subdir = os.path.join(svs_root_dir, subtype)
+    if os.path.isdir(flat_subdir):
+        path = find_file_by_sample(flat_subdir, sample, suffix=".svs")
+        if path:
+            return path
+
+    return None
+
+# Submission_dir model-folder naming differs from the pfm_list names used
+# elsewhere (script 6, pdd.csv filenames). Map pfm_list name -> folder name.
+MODEL_DIR_MAP = {
+    "virchow": "virchow",
+    "virchow2": "virchow2",
+    "UNI": "uni_v1",
+    "UNI2": "uni_v2",
+    "GigaPath": "gigapath",
+    "CONCH": "conch_v1",
+}
+
 def plot_sample_overlay(
     sample,
     subtype,
+    center,
     pdd_value,
     model_minmax,
     model_list,
     patch_size_list,
-    coord_dir,
+    coord_root_dir,
     svs_root_dir,
     out_dir,
 ):
     os.makedirs(out_dir, exist_ok=True)
 
     # ---- find SVS automatically ----
-    
-
-    svs_subdir = os.path.join(svs_root_dir, subtype)
-    svs_path = find_file_by_sample(svs_subdir, sample, suffix=".svs")         
+    svs_path = find_svs_path(svs_root_dir, center, subtype, sample)
+    if svs_path is None:
+        raise FileNotFoundError(
+            f"No .svs found for sample '{sample}' (center={center}, subtype={subtype}) under {svs_root_dir}"
+        )
 
     img, scale = load_svs_thumbnail(svs_path)
 
@@ -302,9 +366,22 @@ def plot_sample_overlay(
 
     for ax, model, patch_size in zip(axes, model_list, patch_size_list):
         # ---- find coords automatically ----
+        # Same center-nested-vs-flat ambiguity as svs above; each model can also
+        # have a different patch_size, so this must be resolved per-model rather
+        # than from one shared coord_dir.
+        model_dirname = MODEL_DIR_MAP.get(model, model)
+        coord_dir = os.path.join(coord_root_dir, center, model_dirname, str(patch_size), subtype, "coords")
+        if not os.path.isdir(coord_dir):
+            coord_dir = os.path.join(coord_root_dir, model_dirname, str(patch_size), subtype, "coords")
         coord_path = find_file_by_sample(coord_dir, sample, suffix=".npy")
+        if coord_path is None and os.path.isdir(coord_dir):
+            # SNUBH prefixes every filename with the center name
+            # ('SNUBH_S12-1449-6.npy'), which a plain startswith match misses.
+            coord_path = find_file_containing_sample(coord_dir, os.listdir(coord_dir), sample, suffix=".npy")
+        if coord_path is None:
+            raise FileNotFoundError(f"No .npy coords found for sample '{sample}' in {coord_dir}")
         coords_all = load_patch_coords(coord_path)
-        
+
         vmin, vmax = model_minmax[model]
 
         overlay_patches_heatmap(
@@ -327,31 +404,48 @@ def plot_sample_overlay(
         os.path.join(out_dir, f"{sample}_tail_overlay.png"),
         dpi=200,
     )
+    plt.savefig(
+        os.path.join(out_dir, f"{sample}_tail_overlay.svg"),
+        dpi=200,
+    )
     plt.close()
     
     
-def patch_overlay_visualization(model_list, patch_size_list, base_dir, root_dir, svs_root_dir, coord_root_dir, out_dir, target):
+def patch_overlay_visualization(model_list, patch_size_list, base_dir, root_dir, svs_root_dir, coord_root_dir, out_dir, target, max_samples=None, sample_list=None):
     all_samples = collect_all_samples(root_dir, model_list, target)
     print(f"#Total unique samples: {len(all_samples)}")
+    if sample_list:
+        missing = [s for s in sample_list if s not in all_samples]
+        if missing:
+            print(f"#WARNING: requested samples not found in this root_dir: {missing}")
+        all_samples = [s for s in sample_list if s in all_samples]
+        print(f"#Restricted to {len(all_samples)} requested samples")
+    elif max_samples is not None:
+        all_samples = all_samples[:max_samples]
+        print(f"#Testing with first {len(all_samples)} samples")
 
     pdd_patch_dict = {}  # {model: {sample: np.ndarray}}
-    
-    pdd_col = 'PDD_%s' % target
+
+    # pdd.csv files use lowercase 'sample' and a capitalized 'PDD_Center'-style
+    # column (target.capitalize()), unlike the *_dist_to_*_wide.csv files below
+    # which use 'Sample'/'Subtype'. Both file types live in subfolders of
+    # root_dir/base_dir ('pdd' and 'distance'), not directly inside them.
+    pdd_col = 'PDD_%s' % target.capitalize()
     for model in model_list:
-        df = pd.read_csv(os.path.join(root_dir, '%s_%s_pdd.csv' % (model, target)))
+        df = pd.read_csv(os.path.join(root_dir, 'pdd', '%s_%s_pdd.csv' % (model, target)))
         model_dict_pdd = {}
-        for sample, sub in df.groupby("Sample"):
+        for sample, sub in df.groupby("sample"):
             sub = sub.reset_index(drop=True)
             model_dict_pdd[sample] = sub[pdd_col].tolist()
         pdd_patch_dict[model] = model_dict_pdd
-        
+
     pdd_patch_dict_base = {}  # {model: {sample: np.ndarray}}
 
     for model in model_list:
-        df = pd.read_csv(os.path.join(base_dir, '%s_%s_pdd.csv' % (model, target)))
+        df = pd.read_csv(os.path.join(base_dir, 'pdd', '%s_%s_pdd.csv' % (model, target)))
 
         model_dict_pdd = {}
-        for sample, sub in df.groupby("Sample"):
+        for sample, sub in df.groupby("sample"):
             sub = sub.reset_index(drop=True)
             model_dict_pdd[sample] = sub[pdd_col].tolist()
         pdd_patch_dict_base[model] = model_dict_pdd
@@ -364,10 +458,10 @@ def patch_overlay_visualization(model_list, patch_size_list, base_dir, root_dir,
         for model, model_dict in pdd_patch_dict_base.items()
     }
 
-    # 기준 모델 하나에서 meta 추출 (어느 모델이든 상관 없음)
-    ref_df = pd.read_csv(f"{root_dir}/{model_list[0]}_dist_to_{target}_prototypes_wide.csv")
+    # 湲곗? 紐⑤뜽 ?섎굹?먯꽌 meta 異붿텧 (?대뒓 紐⑤뜽?대뱺 ?곴? ?놁쓬)
+    ref_df = pd.read_csv(os.path.join(root_dir, 'distance', f"{model_list[0]}_dist_to_{target}_prototypes_wide.csv"))
     sample_meta = (
-        ref_df[["Sample", "Subtype"]]
+        ref_df[["Sample", "Subtype", "Center"]]
         .drop_duplicates()
         .set_index("Sample")
     )
@@ -379,19 +473,26 @@ def patch_overlay_visualization(model_list, patch_size_list, base_dir, root_dir,
             continue
 
         subtype = sample_meta.loc[sample, "Subtype"]
+        center = sample_meta.loc[sample, "Center"]
 
         print(f"[{i+1}/{len(all_samples)}] Processing {sample}")
 
-        plot_sample_overlay(
-            sample=sample,
-            subtype=subtype,
-            pdd_value = pdd_patch_dict,
-            model_minmax = model_minmax,
-            patch_size_list = patch_size_list,
-            coord_root_dir=coord_root_dir,
-            svs_root_dir=svs_root_dir,
-            out_dir=out_dir,
-        )
+        try:
+            plot_sample_overlay(
+                sample=sample,
+                subtype=subtype,
+                center=center,
+                pdd_value=pdd_patch_dict,
+                model_minmax=model_minmax,
+                model_list=model_list,
+                patch_size_list=patch_size_list,
+                coord_root_dir=coord_root_dir,
+                svs_root_dir=svs_root_dir,
+                out_dir=out_dir,
+            )
+        except Exception as e:
+            print(f"#ERROR on {sample}: {e}")
+            continue
 
 def Parser_main():
     parser = argparse.ArgumentParser(description="Extract feature for prototyping")
@@ -403,11 +504,13 @@ def Parser_main():
     parser.add_argument("--coord_root_dir", help = 'coord_dir of features', type = str, required = False)
     parser.add_argument("--save_dir", help = 'Directory to save the feature',type = str, required = False)
     parser.add_argument("--target_column", default = 'center', help = 'Cateogry to make prototype (e.g. subtype, center, scanner, race)')
+    parser.add_argument("--max_samples", default = None, type = int, help = 'Limit to first N samples, for a quick test run')
+    parser.add_argument("--sample_list", nargs = "+", default = None, help = 'Restrict to exactly these sample IDs (overrides --max_samples)', type = str)
     return parser.parse_args()
 
 def main():
     Argument = Parser_main()
-    patch_overlay_visualization(Argument.pfm_list, Argument.patch_size_list, Argument.base_dir, Argument.root_dir, Argument.svs_root_dir, Argument.coord_root_dir, Argument.save_dir, Argument.target_column)
+    patch_overlay_visualization(Argument.pfm_list, Argument.patch_size_list, Argument.base_dir, Argument.root_dir, Argument.svs_root_dir, Argument.coord_root_dir, Argument.save_dir, Argument.target_column, Argument.max_samples, Argument.sample_list)
 
 if __name__ == "__main__":
     main()

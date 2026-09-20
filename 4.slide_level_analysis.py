@@ -9,9 +9,9 @@ import argparse
 
 def compute_SDD_from_long(
     dist_long_df: pd.DataFrame,
-    sample_col: str = "sample",
-    label_col: str = "center",    
-    proto_col: str = "center_proto", 
+    sample_col: str = "Sample",
+    label_col: str = "Center",    
+    proto_col: str = "CENTER_proto", 
     dist_col: str = "distance",
     trim_q: float = None,   # e.g. 0.95 for tail trimming
 ):
@@ -73,22 +73,35 @@ def slide_level_analysis(root_dir, meta_data, pfm_list, save_dir, target_column,
         else:
             data_type = 'original'
     meta_df = pd.read_csv(meta_data)
+    # some centers (e.g. this cohort's GSH) have a duplicate metadata row per scanner
+    # variant (GSH vs GSH_histech) with the same 'sample' id but a different 'center'
+    # value -- drop the scanner-variant row so dedup below keeps the center that's
+    # actually used elsewhere in the pipeline (a no-op for cohorts without this).
+    meta_df = meta_df[meta_df['center'] != 'GSH_histech']
+    meta_df = meta_df.drop_duplicates(subset='sample')
 
     mitigation_dir = os.path.join(root_dir, data_type)
     dist_dir = os.path.join(mitigation_dir, 'distance')
     sdd_dir = os.path.join(save_dir, 'sdd')
     os.makedirs(sdd_dir, exist_ok=True)
+    # save_dir's basename is the data_type folder (original/stainnorm/canceronly/...);
+    # the SDD_norm baseline (xmin/xmax) must always be taken from 'original', regardless
+    # of which data_type is currently being analyzed, so that normalized SDD values stay
+    # comparable across mitigation strategies instead of each being rescaled to its own range.
+    base_sdd_dir = os.path.join(root_dir, 'original', 'sdd')
     plot_dir = os.path.join(save_dir, 'plot')
     os.makedirs(plot_dir, exist_ok=True)
     samplewise_sdd_dir = os.path.join(save_dir, 'samplewise_sdd')
     os.makedirs(samplewise_sdd_dir, exist_ok = True)
+    
+    sdd_col = 'SDD_'+ target_column.capitalize()
 
     for pfm in pfm_list:
         if os.path.exists(os.path.join(sdd_dir, '%s_%s_sdd.csv' % (pfm, target_column))):
             sdd_df = pd.read_csv(os.path.join(sdd_dir, '%s_%s_sdd.csv' % (pfm, target_column)))
         else:
             target_df = pd.read_csv(os.path.join(dist_dir, '%s_dist_to_%s_prototypes_long.csv' % (pfm, target_column)))
-            sdd_df = compute_SDD_from_long(target_df, label_col= target_column, proto_col=target_column + '_proto')
+            sdd_df = compute_SDD_from_long(target_df, label_col=target_column.capitalize(), proto_col=str.upper(target_column)+'_proto')
             sdd_df.to_csv(os.path.join(sdd_dir, '%s_%s_sdd.csv' % (pfm, target_column)), index=False)
         
     total_df = []
@@ -100,36 +113,42 @@ def slide_level_analysis(root_dir, meta_data, pfm_list, save_dir, target_column,
     total_df = pd.concat(total_df)
     
     plt.figure()
-    sns.barplot(data=total_df, x='PFM', y='SDD_%s' % (target_column), order=pfm_list)
-    plt.ylim(0, 0.2)
+    sns.barplot(data=total_df, x='PFM', y=sdd_col, order=pfm_list)
+    # plt.ylim(0, 0.2)
     plt.savefig(os.path.join(plot_dir, '%s_sdd_%s_barplot.png' % (data_type, target_column)))
     plt.savefig(os.path.join(plot_dir, '%s_sdd_%s_barplot.svg' % (data_type, target_column)), dpi=1000)
     
-    # hue_order = [target_column + '__' + c for c in target_center]
+    # ordered by the values actually present, not a hardcoded cohort-specific list, so
+    # this works for any cohort (e.g. internal's BORAMAE/KHMC/SNUBH/GSH or TCGA's
+    # MSKCC/NCI/MD Anderson) without needing to be hand-edited per cohort.
+    hue_order = sorted(total_df['label'].unique())
 
     plt.figure()
-    sns.barplot(data=total_df, x='PFM', y='SDD_%s' % target_column, hue='label', order=pfm_list)
-    plt.ylim(0, 0.4)
+    sns.barplot(data=total_df, x='PFM', y=sdd_col, hue='label', order=pfm_list, hue_order=hue_order)
+    # plt.ylim(0, 0.2)
 
     plt.savefig(os.path.join(plot_dir, '%s_sdd_%s_barplot_per_type.png' % (data_type, target_column)))
     plt.savefig(os.path.join(plot_dir, '%s_sdd_%s_barplot_per_type.svg' % (data_type, target_column)), dpi=1000)
     
     
     feature_results = []
-    sample_meta_df = meta_df[['Patient', 'subtype', 'center']].rename(columns = {'Patient': 'Sample'})
+    # join on 'sample' (already normalized/clean), not 'Patient' -- 'Patient' can be
+    # malformed for some centers (e.g. 'S 12-0001449' vs the actual id 'S12-1449'),
+    # which would silently drop those samples to NaN center/subtype.
+    sample_meta_df = meta_df[['sample', 'subtype', 'center']].rename(columns = {'sample': 'Sample'})
     for pfm in pfm_list:
         base_df = pd.read_csv(
-            os.path.join(sdd_dir, f'{pfm}_{target_column}_sdd.csv'),
-            usecols=['Sample', 'label', 'SDD_' + target_column]
+            os.path.join(base_sdd_dir, f'{pfm}_{target_column}_sdd.csv'),
+            usecols=['Sample', 'label', sdd_col]
         )
-        xmin, xmax = (min(base_df['SDD_' + target_column]), max(base_df['SDD_' + target_column]))
+        xmin, xmax = (base_df[sdd_col].min(), base_df[sdd_col].max())
         df = pd.read_csv(
             os.path.join(sdd_dir, f'{pfm}_{target_column}_sdd.csv'),
-            usecols=['Sample', 'label', 'SDD_' + target_column]
+            usecols=['Sample', 'label', sdd_col]
         )
 
         df['SDD_norm'] = (
-            df['SDD_' + target_column]
+            df[sdd_col]
             .transform(lambda x: (x - xmin) / (xmax - xmin))
         )
         df['PFM'] = pfm
@@ -137,8 +156,15 @@ def slide_level_analysis(root_dir, meta_data, pfm_list, save_dir, target_column,
         feature_results.append(df)
         
     total_df = pd.concat(feature_results)
+    assert total_df['center'].isna().sum() == 0 and total_df['subtype'].isna().sum() == 0, \
+        "some samples didn't match metadata -- check for a join-key mismatch before trusting this output"
+
+    # ordered by the values actually present, not a hardcoded cohort-specific list.
+    total_df['center'] = pd.Categorical(total_df['center'], categories=sorted(total_df['center'].unique()), ordered=True)
+    total_df['subtype'] = pd.Categorical(total_df['subtype'], categories=sorted(total_df['subtype'].unique()), ordered=True)
 
     total_df = total_df.sort_values(['center', 'subtype'])
+
     sample_order = total_df[total_df['PFM']==pfm_list[0]]['Sample'].tolist()
 
     total_df.to_csv(os.path.join(samplewise_sdd_dir, '%s_samplewise_SDD_%s_total.csv' % (data_type, target_column)), index=False)
@@ -159,8 +185,8 @@ def Parser_main():
     parser.add_argument("--save_dir", help = 'Directory to save the feature',type = str, required = True)
     parser.add_argument("--pfm_list", nargs = "+", default = [], help = 'PFM list for comparison', type = str)
     parser.add_argument("--target_column", default = 'center', help = 'Cateogry to make prototype (e.g. subtype, center, scanner, race)')
-    parser.add_argument("--stainnorm", default = False, help = 'Stainnorm data or not', type = bool)
-    parser.add_argument("--cancer_only", default = False, help = 'Use cancer only data', type = bool)
+    parser.add_argument("--stainnorm", action = 'store_true', help = 'Use stainnorm data instead of original')
+    parser.add_argument("--cancer_only", action = 'store_true', help = 'Use cancer-only data')
     
     return parser.parse_args()
 

@@ -231,7 +231,7 @@ def build_prototype(feature_root_dir, df, target_column, save_dir, feature_type,
     prototype_dataframe, prototype = build_prototypes(
         whole_final_data, whole_final_df,
         group_cols=target_column,
-        normalize_after_mean=False,
+        normalize_after_mean=True,
         normalize_X=True,
     )
 
@@ -259,11 +259,9 @@ def prepare_testdata(feature_root_dir, df, save_dir, feature_type, target_patch_
         target_feature = feature_type
 
     if 'stainnorm' in data_type:
-        feature_type += '_stainnorm'
         target_feature += '_stainnorm'
     
     if 'stainnorm' in data_type:
-        feature_type += '_stainnorm'
         target_feature += '_stainnorm'
     
     if 'canceronly' in data_type:

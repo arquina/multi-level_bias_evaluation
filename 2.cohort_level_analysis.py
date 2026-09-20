@@ -1,10 +1,10 @@
 import os
-import umap
-import torch
 from matplotlib import pyplot as plt
 import pandas as pd
 os.environ['OMP_NUM_THREADS'] = '10'
 os.environ['MKL_NUM_THREADS'] = '10'
+import umap
+import torch
 import numpy as np
 import seaborn as sns
 from tqdm import tqdm
@@ -14,6 +14,52 @@ from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 from scipy.spatial.distance import cdist
 import re
 import argparse
+plt.rcParams["svg.fonttype"] = "none"
+
+def calculate_nmi_repeated(X, metadata, labels, n_init=10, n_seeds=20):
+    rows = []
+
+    for label in labels:
+        if label not in metadata.columns:
+            continue
+
+        values = metadata[label]
+        valid = values.notna() & values.astype(str).str.strip().ne("")
+
+        X_label = X[valid.to_numpy()]
+        y = values.loc[valid].astype(str).to_numpy()
+        k = len(np.unique(y))
+
+        # 결측뿐이거나 단일 category이면 비교하지 않음
+        if k < 2:
+            continue
+
+        for seed in range(n_seeds):
+            model = KMeans(
+                n_clusters=k,
+                init="k-means++",
+                n_init=n_init,
+                random_state=seed,
+                algorithm="lloyd",
+                max_iter=300,
+                tol=1e-4,
+            )
+            cluster_labels = model.fit_predict(X_label)
+
+            rows.append({
+                "Label": label,
+                "Seed": seed,
+                "N": len(y),
+                "K": k,
+                "NMI": normalized_mutual_info_score(
+                    y, cluster_labels, average_method="arithmetic"
+                ),
+                "Inertia": model.inertia_,
+            })
+
+    return pd.DataFrame(
+        rows, columns=["Label", "Seed", "N", "K", "NMI", "Inertia"]
+    )
 
 def clean_id(id_str):
     # 공백 제거하고 숫자 앞의 0 제거
@@ -354,7 +400,13 @@ def UMAP_drawing_and_bias_calculation(feature_root_dir, df, umap_figure_dir, fea
 
         whole_final_df = pd.DataFrame(zip(whole_type_list, whole_center_list, whole_race_list, whole_scanner_list, whole_sample_list), columns = ['Subtype', 'Center', 'Race', 'Scanner', 'Sample'])
         whole_final_df.to_csv(os.path.join(data_save_dir, feature_type + '_metadata.csv'), index = False)
-    
+
+    whole_final_df = whole_final_df.copy()
+    whole_final_df["Center"] = whole_final_df["Center"].replace({
+        "GSH_histech": "GSH",
+    })
+    whole_center_list = whole_final_df["Center"].to_list()
+
     whole_reducer = umap.UMAP(n_components=2, random_state = 12345)
     whole_umap_data = whole_reducer.fit_transform(whole_final_data)
     
@@ -381,37 +433,21 @@ def UMAP_drawing_and_bias_calculation(feature_root_dir, df, umap_figure_dir, fea
 
     if multi_scanner:
         draw_umap(whole_umap_data, umap_figure_dir, whole_scanner_list, whole_sample_list, f'scanner_{feature_type}_whole', feature_type, scanner_dict)
-    
+
+    labels = ["Subtype", "Center", "Race"]
+
     if multi_scanner:
-        mean_t, mean_c, mean_r, mean_s = compare_clustering_fixed_with_scanner(
-                whole_final_data,
-                whole_type_list,
-                whole_center_list,
-                whole_race_list,
-                whole_scanner_list,
-                len(list(set(whole_type_list))),
-                len(list(set(whole_center_list))),
-                len(list(set(whole_race_list))),
-                len(list(set(whole_scanner_list))),
-                random_state=1234567,
-                metric='NMI',
-                method='KMeans'
-            )
-        return mean_t, mean_c, mean_r, mean_s
-    else:
-        mean_t, mean_c, mean_r = compare_clustering_fixed(
-                whole_final_data,
-                whole_type_list,
-                whole_center_list,
-                whole_race_list,
-                len(list(set(whole_type_list))),
-                len(list(set(whole_center_list))),
-                len(list(set(whole_race_list))),
-                random_state=1234567,
-                metric='NMI',
-                method='KMeans'
-            )
-        return mean_t, mean_c, mean_r
+        labels.append("Scanner")
+
+    return calculate_nmi_repeated(
+        whole_final_data,
+        whole_final_df,
+        labels=labels,
+        n_init=10,
+        n_seeds=20,
+    )
+    
+    
     
 def draw_umap_and_calculate_NMI(feature_root_dir, metadata, target_database, target_center, pfm_list, save_dir, target_data, stainnorm, cancer_only = False, multi_scanner = False, with_normal = False):
     target_type_sample = pd.read_csv(metadata)
@@ -439,68 +475,91 @@ def draw_umap_and_calculate_NMI(feature_root_dir, metadata, target_database, tar
     bias_figure_dir = os.path.join(target_dir, 'bias')
     os.makedirs(bias_figure_dir, exist_ok = True)
 
-    bias_dict = {}
+    all_results = []
+
     for pfm in pfm_list:
-        target_patch_size = patch_size_dict[pfm]
-        print(pfm)
+        result = UMAP_drawing_and_bias_calculation(
+            feature_root_dir,
+            target_type_sample,
+            umap_figure_dir,
+            pfm,
+            patch_size_dict[pfm],
+            target_data,
+            stainnorm,
+            cancer_only,
+            multi_scanner,
+            with_normal,
+        )
+        result["PFM"] = pfm
+        all_results.append(result)
 
-        if multi_scanner:
-            mean_t, mean_c, mean_r, mean_s = UMAP_drawing_and_bias_calculation(feature_root_dir, target_type_sample, umap_figure_dir, pfm, target_patch_size, target_data, stainnorm, cancer_only, multi_scanner, with_normal)
-            bias_dict[pfm] = [mean_t, mean_c, mean_r, mean_s]
-        else:
-            mean_t, mean_c, mean_r = UMAP_drawing_and_bias_calculation(feature_root_dir, target_type_sample, umap_figure_dir, pfm, target_patch_size, target_data, stainnorm, cancer_only, multi_scanner, with_normal)
-            bias_dict[pfm] = [mean_t, mean_c, mean_r]
+    raw = pd.concat(all_results, ignore_index=True)
 
-    if multi_scanner:
-        df = pd.DataFrame.from_dict(bias_dict, orient="index", columns=["Subtype", "Center", "Race", "Scanner"])
+    summary = (
+        raw.groupby(["PFM", "Label", "N", "K"], sort=False)["NMI"]
+        .agg(
+            Mean="mean",
+            SD="std",
+            Minimum="min",
+            Maximum="max",
+            Repeats="count",
+        )
+        .reset_index()
+    )
 
-        csv_path = os.path.join(bias_figure_dir, "NMI_value.csv")
-        df.to_csv(csv_path)
+    raw.to_csv(
+        os.path.join(bias_figure_dir, "NMI_per_seed.csv"), index=False
+    )
+    summary.to_csv(
+        os.path.join(bias_figure_dir, "NMI_summary.csv"), index=False
+    )
 
-        keys = df.index.tolist()
-        values = df.values
-        colors = ["#a4c6d8", "#62778a", "#9e9fbc", "#c0579c"]
-        fig_names = ["Subtype", "Center", "Race", 'Scanner']
+    colors = {
+        "Subtype": "#658b98",
+        "Center": "#697c8d",
+        "Race": "#9998b8",
+        "Scanner": "#be76a7",
+    }
 
-        for i in range(4):
-            plt.figure()
-            plt.bar(keys, values[:, i], color=colors[i])
-            plt.ylim(0, 1)
-            plt.xlabel("PFM")
-            plt.ylabel(f"{fig_names[i]}")
-            plt.xticks(rotation=45)
+    for label in summary["Label"].unique():
+        table = summary[summary["Label"] == label].set_index("PFM")
+        order = [pfm for pfm in pfm_list if pfm in table.index]
+        table = table.loc[order]
 
-            png_path = os.path.join(bias_figure_dir, f"{fig_names[i]}.png")
-            svg_path = os.path.join(bias_figure_dir, f"{fig_names[i]}.svg")
-            plt.tight_layout()
-            plt.savefig(png_path, dpi=300)
-            plt.savefig(svg_path)
-            plt.close()
-    else:
-        df = pd.DataFrame.from_dict(bias_dict, orient="index", columns=["Subtype", "Center", "Race"])
+        fig, ax = plt.subplots(figsize=(7, 4.5))
 
-        csv_path = os.path.join(bias_figure_dir, "NMI_value.csv")
-        df.to_csv(csv_path)
+        ax.bar(
+            np.arange(len(order)),
+            table["Mean"],
+            yerr=table["SD"],
+            capsize=3,
+            color=colors[label],
+            error_kw={"elinewidth": 1.2},
+        )
 
-        keys = df.index.tolist()
-        values = df.values
-        colors = ["#a4c6d8", "#62778a", "#9e9fbc"]
+        ax.set_xticks(np.arange(len(order)))
+        ax.set_xticklabels(order, rotation=35, ha="right")
+        ax.set_ylabel(f"{label} NMI")
 
-        fig_names = ["Subtype", "Center", "Race"]
-        for i in range(3):
-            plt.figure()
-            plt.bar(keys, values[:, i], color=colors[i])
-            plt.ylim(0, 1)
-            plt.xlabel("PFM")
-            plt.ylabel(f"{fig_names[i]}")
-            plt.xticks(rotation=45)
+        # Mean ± SD가 범위를 넘는 경우에도 error bar가 잘리지 않도록
+        lower = min(0, float((table["Mean"] - table["SD"]).min()))
+        upper = max(1.05, float((table["Mean"] + table["SD"]).max()) + 0.03)
+        ax.set_ylim(lower - 0.01 if lower < 0 else 0, upper)
 
-            png_path = os.path.join(bias_figure_dir, f"{fig_names[i]}.png")
-            svg_path = os.path.join(bias_figure_dir, f"{fig_names[i]}.svg")
-            plt.tight_layout()
-            plt.savefig(png_path, dpi=300)
-            plt.savefig(svg_path)
-            plt.close()
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        fig.tight_layout()
+
+        for extension in ["svg", "png"]:
+            fig.savefig(
+                os.path.join(bias_figure_dir, f"{label}_NMI.{extension}"),
+                dpi=300,
+                bbox_inches="tight",
+            )
+
+        plt.close(fig)
+
+    return raw, summary
 
 
 
@@ -513,10 +572,10 @@ def Parser_main():
     parser.add_argument("--target_center", nargs = "+", default = [], help = 'Center names you want to draw in data', type = str)
     parser.add_argument("--pfm_list", nargs = "+", default = [], help = 'PFM list for comparison', type = str)
     parser.add_argument("--target_data", default = '', help = 'Savedir name', type = str)
-    parser.add_argument("--stainnorm", default = False, help = 'Stainnorm data or not', type = bool)
-    parser.add_argument("--cancer_only", default = False, help = 'Use cancer annotation to draw', type = bool)
-    parser.add_argument("--multi_scanner", default = False, help = 'Scanner comparison', type = bool)
-    parser.add_argument("--with_normal", default = False, help = 'draw normal part in UMAP', type = bool)
+    parser.add_argument("--stainnorm", action="store_true")
+    parser.add_argument("--cancer_only", action="store_true")
+    parser.add_argument("--multi_scanner", action="store_true")
+    parser.add_argument("--with_normal", action="store_true")
     
     return parser.parse_args()
 

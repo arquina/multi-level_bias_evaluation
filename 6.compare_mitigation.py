@@ -13,6 +13,8 @@ from scipy.stats import (
     levene
 )
 import argparse
+from matplotlib.ticker import MultipleLocator
+from statsmodels.stats.multitest import multipletests
 
 def select_significance(list_1, list_2, paired=False, alpha=0.05):
     list_1 = np.asarray(list_1)
@@ -78,20 +80,20 @@ def mitigation_comparison(root_dir, pfm_list,save_dir, target_column, target_mit
     save_dir = os.path.join(save_dir, target_mitigation)
     os.makedirs(save_dir, exist_ok= True)
 
-    pdd_col = 'PDD_%s' % target_column
-    maxy = [0.44, 0.11, 0.22, 0.22, 0.165, 0.11]
-    maxy = [0.22, 0.088, 0.154, 0.154, 0.154, 0.088]
-    
+    pdd_col = 'PDD_%s' % target_column.capitalize()
+
     mitigation_dir = os.path.join(root_dir, target_mitigation)
 
     fig, ax = plt.subplots(1, len(pfm_list), figsize=(30, 5))
+    panel_test = []   # test name per panel, for title text after BH correction
+    panel_pvalue = [] # raw p-values, corrected together (BH-FDR) across this figure's panels
     for i, pfm in enumerate(pfm_list):
         b_df = pd.read_csv(
-            os.path.join(mitigation_basedir, 'distance', f'{pfm}_{target_column}_psi.csv'),
+        os.path.join(mitigation_basedir, 'pdd', '%s_%s_pdd.csv' % (pfm, target_column)),
             usecols=['sample', pdd_col]
         )
         m_df = pd.read_csv(
-            os.path.join(mitigation_dir, 'distance', f'{pfm}_{target_column}_psi.csv'),
+        os.path.join(mitigation_dir, 'pdd', '%s_%s_pdd.csv' % (pfm, target_column)),
             usecols=['sample', pdd_col]
         )
 
@@ -100,8 +102,15 @@ def mitigation_comparison(root_dir, pfm_list,save_dir, target_column, target_mit
         total_df = pd.concat([b_df, m_df])
         total_df = total_df.groupby(['mitigation', 'sample'])[pdd_col].mean().reset_index()
         print(total_df)
-        test, pvalue = select_significance(b_df[pdd_col], m_df[pdd_col], paired=True)
+
+        # sample-level paired significance test (not patch-level b_df/m_df, which
+        # pseudoreplicates and pins the p-value to ~0). pivot aligns 'original' and
+        # target_mitigation by sample so pairing is correct regardless of row order.
+        pivot = total_df.pivot(index='sample', columns='mitigation', values=pdd_col)
+        test, pvalue = select_significance(pivot['original'], pivot[target_mitigation], paired=True)
         print(test, pvalue)
+        panel_test.append(test)
+        panel_pvalue.append(pvalue)
         # boxplot
         sns.boxplot(
             data=total_df,
@@ -126,9 +135,8 @@ def mitigation_comparison(root_dir, pfm_list,save_dir, target_column, target_mit
             jitter=False,
             size=4,
             alpha=0.6,
-            legend=False,
             ax=ax[i]
-            
+
         )
 
         # connect paired points
@@ -140,8 +148,21 @@ def mitigation_comparison(root_dir, pfm_list,save_dir, target_column, target_mit
                 alpha=0.4,
                 linewidth=1
             )
-        ax[i].set_ylim(0, maxy[i])
-        ax[i].set_title('%s_%s (%s: %.2e)' % (target_column, pfm, test, pvalue))
+        # Small proportional headroom above the data max (not matplotlib's default
+        # ~5% margin, which can land just short of a tick e.g. 0.093 -> 0.0977 and
+        # hide the 0.10 label). This only pulls in the NEXT 0.05-multiple tick when
+        # the data is already close to it (e.g. 0.14 -> reaches 0.15); it does not
+        # force a jump to the next multiple when the data sits mid-interval (e.g.
+        # 0.12 stays under 0.15 and only 0.00/0.05/0.10 get labeled).
+        data_max = total_df[pdd_col].max()
+        ax[i].set_ylim(0, data_max * 1.1)
+        ax[i].yaxis.set_major_locator(MultipleLocator(0.05))
+
+    # Benjamini-Hochberg correction across this figure's panels (the pfm_list
+    # comparisons shown together), then set titles with the corrected p-values.
+    padj = multipletests(panel_pvalue, method='fdr_bh')[1]
+    for i, pfm in enumerate(pfm_list):
+        ax[i].set_title('%s_%s (%s: p_adj=%.2e)' % (target_column, pfm, panel_test[i], padj[i]))
     plt.tight_layout()
     plt.savefig(os.path.join(save_dir, '%s_pdd_%s_paired_boxplot.png' % (target_column, target_mitigation)))             
     plt.savefig(os.path.join(save_dir, '%s_pdd_%s_paired_boxplot.svg' % (target_column, target_mitigation)), dpi=1000)    
@@ -154,7 +175,7 @@ def Parser_main():
     parser.add_argument("--save_dir", help = 'Directory to save the feature',type = str, required = False)
     parser.add_argument("--pfm_list", nargs = "+", default = [], help = 'PFM list for comparison', type = str)
     parser.add_argument("--target_column", default = 'center', help = 'Cateogry to make prototype (e.g. subtype, center, scanner, race)')
-    parser.add_argument("--target_mitigation", default = 'stainnorm', help = 'Mitigation for compare', type = bool)
+    parser.add_argument("--target_mitigation", default = 'stainnorm', help = 'Mitigation for compare', type = str)
     return parser.parse_args()
 
 def main():
